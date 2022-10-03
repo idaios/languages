@@ -1,0 +1,9 @@
+﻿/.vs
+.DS_Store
+/.vscode
+/.idea
+/cmake-build-debug
+CMakeFiles/
+*.cmake
+CMakeCache.txt
+Makefile
