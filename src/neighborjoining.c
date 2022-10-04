@@ -297,13 +297,16 @@ void  binomial_random(int sz, double prob, int* inds, int* indssz)
   *indssz = cnt;
 }
 
-double subsetRF(int*** matrices, int* njdistanceMatrix, int k, int sz, int seqLength, int*** validComparisonsMatrices, int* validComparisons, char* newicktree, pll_utree_t *target_tree, char **fastaNames, int *currentChosenIndexes, int *indexesToChooseFrom, int *k1, int *k2, double prob, int *indexes, int *nextToTryIndexes, int*njrescaledMat, int* keepinds, int* insertinds){
+double subsetRF(int*** matrices, int* njdistanceMatrix, int k, int sz, int seqLength, int*** validComparisonsMatrices, int* validComparisons, char* newicktree, pll_utree_t *target_tree, char **fastaNames, int *currentChosenIndexes, int *indexesToChooseFrom, int *k1, int *k2, double prob, int *indexes, int *nextToTryIndexes, int*njrescaledMat, int* keepinds, int* insertinds, int *tmpFlags, double rfPrevious){
   double rf = 0;
   int i = 0, keepindssz = 0, insertindssz = 0;
   double probdelete = 0., probinsert = 0.;
 
+  static int statici = 0;
+  statici++;
   
-  if( (*k1) == 0 && (*k2) == 0){
+  
+  if(statici == 1){
     assert(k > 0 && k < seqLength);
     int* v = calloc(seqLength, sizeof(int));
 
@@ -311,12 +314,13 @@ double subsetRF(int*** matrices, int* njdistanceMatrix, int k, int sz, int seqLe
       v[i] = i;
     }
     shuffleInts(v, seqLength);
-    *k1 = k;
+    
     for(int i = 0; i < k; ++i)
       {
 	currentChosenIndexes[i] = indexes[i] = v[i];
 	//fprintf(stderr, "%d,", v[i]);
       }
+    *k1 = k;
     *k2 = seqLength - k;
     for(int i = 0; i < (*k2); ++i)
       {
@@ -329,15 +333,22 @@ double subsetRF(int*** matrices, int* njdistanceMatrix, int k, int sz, int seqLe
     {
       assert(prob < 1 && prob > 0);
       probdelete = 1. - prob;
-      probinsert = probdelete * ( (*k1)/(*k2) );
+      probinsert = probdelete * ( (double)(*k1)/(*k2) );
       binomial_random( (*k1), prob, keepinds, &keepindssz);
       binomial_random( (*k2), probinsert, insertinds, &insertindssz);
 
+      //fprintf(stderr, "prob: %f, probinsert: %f, k1: %d, keep: %d and insert: %d\n", prob, probinsert, *k1, keepindssz, insertindssz);
       for(int i = 0; i < keepindssz; ++i)
-	nextToTryIndexes[i] = currentChosenIndexes[ keepinds[i] ];
+	{
+	  nextToTryIndexes[i] = currentChosenIndexes[ keepinds[i] ];
+	  //fprintf(stderr, "next at position %d is %d\n", i, nextToTryIndexes[i]);
+	}
+      
       for(int i = 0; i < insertindssz; ++i)
-	nextToTryIndexes[i+keepindssz] = indexesToChooseFrom[ insertinds[i] ];
-
+	{
+	  nextToTryIndexes[i+keepindssz] = indexesToChooseFrom[ insertinds[i] ];
+	  //fprintf(stderr, "next at position %d is %d\n", i, nextToTryIndexes[i]);
+	}
       k = keepindssz + insertindssz;
     }
   
@@ -363,8 +374,51 @@ double subsetRF(int*** matrices, int* njdistanceMatrix, int k, int sz, int seqLe
   
   ttree_draw_newick(clusters_get_tree(matrix), newicktree);
   rf = rf2(newicktree, target_tree);
+
+
+  if(statici == 1){
+    return rf;
+  }
+
+  if(rf <=  rfPrevious)
+    {
+
+      if(rf < rfPrevious){
+	fprintf(stdout, "step: %d, rf: %f, k1: %d\n", statici, rf, *k1);
+      }
+	
+      
+      (*k1) = (*k2) = 0;
+      for(int i = 0; i < seqLength; ++i)
+	{
+	  tmpFlags[i] = 0;
+	}
+      for(int i=0; i < k; ++i)
+	{
+	  currentChosenIndexes[i] = nextToTryIndexes[i];
+	  tmpFlags[ currentChosenIndexes[i] ] = 1;
+	  //fprintf(stderr, "Index %d became 1\n", currentChosenIndexes[i]);
+	  (*k1)++;
+	}
+      int j = 0;
+      for(int i = 0; i < seqLength; ++i)
+	{
+	  if(tmpFlags[i] == 0){
+	    indexesToChooseFrom[j++] = i;
+	    (*k2)++;
+	  }
+	}
+      if( (*k1) + (*k2) != seqLength){
+	//fprintf(stderr, "k1: %d, k2: %d, seqLength: %d\n", *k1, *k2, seqLength);
+	assert( (*k1) + (*k2) == seqLength );
+      }
+      return rf;
+    }
+  else{
+    return rfPrevious;
+  }
   
-  return rf;
+  return -1;
 }
 
 int main(int argc, char **argv) {
@@ -432,7 +486,7 @@ int main(int argc, char **argv) {
   
   hamming(seqs, count, sequence_length, distances_matrix, validcomparisons_matrix);
   
-  int k = 100;
+  int k = 200;
   int* njdistanceMatrix = calloc(count*count, sizeof(int));
   int* validComparisons = calloc(count*count, sizeof(int));
   
@@ -444,17 +498,19 @@ int main(int argc, char **argv) {
   int *njrescaledMat = calloc(count*count, sizeof(int));
   int *indexesToChooseFrom = calloc(sequence_length, sizeof(int));
   int *currentChosenIndexes = calloc(sequence_length, sizeof(int));
+  int *tmpFlags = calloc(sequence_length, sizeof(int));
   int *nextToTryIndexes = calloc(sequence_length, sizeof(int));
   int *keepinds = calloc(sequence_length, sizeof(int));
   int *insertinds = calloc(sequence_length, sizeof(int));
   int *currentBestIndexes = calloc(sequence_length, sizeof(int));
   double rfdist = 0;
   int k1 = 0, k2 = 0;
-  for( int reps = 0; reps < 10000; ++reps)
+  double rfPrevious = 9999999999;
+  for( int reps = 0; reps < 100000; ++reps)
     {
       char *newicktree = calloc(10000, sizeof(char));
-      rfdist = subsetRF(distances_matrix, njdistanceMatrix, k, count, sequence_length, validcomparisons_matrix, validComparisons, newicktree, target_tree, fastaNames,  currentChosenIndexes, indexesToChooseFrom, &k1, &k2, keepProb, currentBestIndexes, nextToTryIndexes, njrescaledMat, keepinds, insertinds);
-      fprintf(stdout, "rf: %f\n", rfdist);
+      rfPrevious = subsetRF(distances_matrix, njdistanceMatrix, k, count, sequence_length, validcomparisons_matrix, validComparisons, newicktree, target_tree, fastaNames,  currentChosenIndexes, indexesToChooseFrom, &k1, &k2, keepProb, currentBestIndexes, nextToTryIndexes, njrescaledMat, keepinds, insertinds, tmpFlags, rfPrevious);
+      //fprintf(stdout, "%d, rf: %f\n", reps, rfPrevious);
       free(newicktree);
     }
   
